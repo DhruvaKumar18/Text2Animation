@@ -1,0 +1,447 @@
+{% extends 'base.html' %}
+
+{% block title %}Text2Animation Studio - Story Upload & Parser{% endblock %}
+
+{% block extra_css %}
+<style>
+    .dropzone-container {
+        border: 2px dashed rgba(99, 102, 241, 0.4);
+        background: rgba(22, 28, 41, 0.3);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-radius: 16px;
+        padding: 40px 20px;
+        text-align: center;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+        position: relative;
+    }
+
+    .dropzone-container:hover, .dropzone-container.dragover {
+        border-color: var(--accent-primary);
+        background: rgba(99, 102, 241, 0.08);
+        box-shadow: 0 0 25px rgba(99, 102, 241, 0.2);
+    }
+
+    .dropzone-icon {
+        font-size: 3rem;
+        background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 20px;
+        transition: transform 0.3s ease;
+    }
+
+    .dropzone-container:hover .dropzone-icon {
+        transform: translateY(-5px) scale(1.05);
+    }
+
+    .format-badge {
+        font-size: 0.8rem;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 4px 10px;
+        border-radius: 6px;
+        color: var(--text-muted);
+    }
+
+    /* Custom textarea styling for preview */
+    .preview-editor {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: #f3f4f6;
+        background: #090b10 !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 12px;
+        resize: vertical;
+        padding: 15px;
+        transition: border-color 0.2s ease;
+    }
+
+    .preview-editor:focus {
+        border-color: var(--accent-primary) !important;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25) !important;
+    }
+
+    .pulse-uploading {
+        animation: upload-pulse 1.5s infinite ease-in-out;
+    }
+
+    @keyframes upload-pulse {
+        0%, 100% { border-color: rgba(99, 102, 241, 0.4); }
+        50% { border-color: var(--accent-primary); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Back Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="{% url 'dashboard:index' %}" class="btn btn-link text-muted p-0 mb-2 text-decoration-none small">
+                <i class="fa-solid fa-chevron-left me-1"></i> Return to Dashboard
+            </a>
+            <h1 class="h2 mb-1">Create Story via Document Parser</h1>
+            <p class="text-muted small">Upload a PDF, DOCX, or TXT file. We will extract and clean the content, allowing you to preview and edit the story before launching the render engine.</p>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Document Upload Portal -->
+        <div class="col-lg-5">
+            <div class="glass-panel p-4 mb-4">
+                <h3 class="h5 mb-3 d-flex align-items-center">
+                    <i class="fa-solid fa-cloud-arrow-up text-indigo me-2" style="color: #818cf8;"></i> File Drop Zone
+                </h3>
+
+                <!-- Upload Drag-Drop Box -->
+                <div class="dropzone-container" id="dropzone" onclick="document.getElementById('fileInput').click()">
+                    <input type="file" id="fileInput" class="d-none" accept=".pdf,.docx,.txt">
+                    <div class="dropzone-icon">
+                        <i class="fa-solid fa-file-invoice"></i>
+                    </div>
+                    <h5 class="h6 mb-2">Drag & Drop Story script here</h5>
+                    <p class="text-muted small mb-4">or click to browse your directories</p>
+                    
+                    <div class="d-flex justify-content-center gap-2 mb-2">
+                        <span class="format-badge"><i class="fa-solid fa-file-pdf text-danger me-1"></i>PDF</span>
+                        <span class="format-badge"><i class="fa-solid fa-file-word text-primary me-1"></i>DOCX</span>
+                        <span class="format-badge"><i class="fa-solid fa-file-lines text-secondary me-1"></i>TXT</span>
+                    </div>
+                    <div class="text-muted small" style="font-size: 0.75rem;">Maximum file size: 5 Megabytes</div>
+                </div>
+
+                <!-- Client Side Validation Alerts -->
+                <div id="validationAlert" class="alert alert-danger d-none mt-3" style="border-radius: 8px;" role="alert">
+                    <i class="fa-solid fa-circle-exclamation me-2"></i><span id="alertMsg">File validation failed.</span>
+                </div>
+
+                <!-- Upload Progress Monitoring -->
+                <div id="progressContainer" class="d-none mt-4">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="small text-muted" id="uploadFilename">file.docx</span>
+                        <span class="small text-indigo fw-bold" id="uploadPercent">0%</span>
+                    </div>
+                    <div class="progress bg-dark" style="height: 6px;">
+                        <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-indigo" role="progressbar" style="width: 0%; background-color: #6366f1;"></div>
+                    </div>
+                    <div class="text-center text-muted small mt-2" style="font-size: 0.75rem;">
+                        <i class="fa-solid fa-circle-notch fa-spin me-1"></i>Parsing content structure...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Guidelines Card -->
+            <div class="glass-panel p-4">
+                <h4 class="h6 mb-3"><i class="fa-solid fa-circle-info text-indigo me-2" style="color: #818cf8;"></i>Parser Guidelines</h4>
+                <ul class="text-muted small ps-3 mb-0" style="line-height: 1.7;">
+                    <li class="mb-1"><strong>Headers & Footers:</strong> Page numbers (e.g. "Page 1 of 5" or standalone digits) are automatically stripped to reduce visual clutter.</li>
+                    <li class="mb-1"><strong>Formatting:</strong> Multiple empty lines and duplicate spaces will be normalized.</li>
+                    <li><strong>Tables:</strong> Docx data matrices are extracted row-by-row and separated by divider grids for readability.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Extract Storyboard Editor & Preview -->
+        <div class="col-lg-7">
+            <div class="glass-panel p-4 h-100 d-flex flex-column">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h3 class="h5 mb-0">Story Preview Editor</h3>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" id="polishBtn" class="btn btn-sm btn-glass px-3 py-1.5 d-flex align-items-center gap-1.5" style="font-size: 0.75rem;" onclick="polishPromptText()">
+                            <i id="polishIcon" class="fa-solid fa-wand-magic"></i>
+                            <span id="polishSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true" style="width: 0.75rem; height: 0.75rem;"></span>
+                            <span id="polishBtnText">AI Polish</span>
+                        </button>
+                        <span id="extractedLabel" class="badge bg-success-subtle text-success d-none" style="font-size: 0.75rem;">Document Extracted</span>
+                    </div>
+                </div>
+
+                <div id="polishAlert" class="alert alert-success d-none mb-3 py-2 small" style="border-radius: 8px;">
+                    <i class="fa-solid fa-circle-check me-1"></i>
+                    Prompt enhanced using <strong id="polishProvider">GEMINI</strong> in <strong id="polishTime">0.5</strong>s!
+                </div>
+
+                <div class="flex-grow-1 mb-4 d-flex flex-column">
+                    <!-- Text Area Preview / Editor -->
+                    <textarea class="form-control preview-editor flex-grow-1 w-100" id="previewTextArea" rows="18" placeholder="Extracted text from your uploaded document will appear here. You will be able to review, adjust, or write your visual scenario description directly in this window before starting the rendering engine."></textarea>
+                </div>
+
+                <!-- Create Project Form Form Actions -->
+                <form id="submitStoryForm">
+                    {% csrf_token %}
+                    <!-- Optional hidden fields to associate files -->
+                    <input type="hidden" id="assocFilename">
+                    <input type="hidden" id="assocFilePath">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <input type="text" class="form-control bg-dark border-secondary text-white py-3" id="projectTitle" placeholder="Project Name (Optional)" style="border-radius: 8px;">
+                        </div>
+                        <div class="col-md-6">
+                            <button type="submit" id="submitBtn" class="btn btn-gradient-primary w-100 py-3 d-flex align-items-center justify-content-center gap-2" disabled>
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Create & Run Pipeline
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const valAlert = document.getElementById('validationAlert');
+    const alertMsg = document.getElementById('alertMsg');
+    const progressCont = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('uploadProgressBar');
+    const percentText = document.getElementById('uploadPercent');
+    const filenameText = document.getElementById('uploadFilename');
+    const previewTextArea = document.getElementById('previewTextArea');
+    const labelExtracted = document.getElementById('extractedLabel');
+    const submitBtn = document.getElementById('submitBtn');
+    const assocFilename = document.getElementById('assocFilename');
+    const assocFilePath = document.getElementById('assocFilePath');
+
+    // Drag-Drop Event Handlers
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+        }, false);
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length > 0) {
+            handleFileSelection(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (fileInput.files.length > 0) {
+            handleFileSelection(fileInput.files[0]);
+        }
+    });
+
+    function showAlert(msg) {
+        alertMsg.textContent = msg;
+        valAlert.classList.remove('d-none');
+    }
+
+    function hideAlert() {
+        valAlert.classList.add('d-none');
+    }
+
+    function handleFileSelection(file) {
+        hideAlert();
+        
+        // 1. Client-Side Format Validations
+        const allowedExtensions = /(\.pdf|\.docx|\.txt)$/i;
+        if (!allowedExtensions.exec(file.name)) {
+            showAlert("Unsupported file extension. Only PDF, DOCX, and TXT documents are allowed.");
+            return;
+        }
+
+        // 2. Client-Side Size Validations (5MB = 5 * 1024 * 1024 bytes)
+        const maxSizeBytes = 5 * 1024 * 1024;
+        if (file.size > maxSizeBytes) {
+            showAlert("File exceeds the maximum size limit of 5MB.");
+            return;
+        }
+
+        // Setup upload progress visualization
+        filenameText.textContent = file.name;
+        progressCont.classList.remove('d-none');
+        dropzone.classList.add('pulse-uploading');
+        submitBtn.disabled = true;
+
+        // Perform Upload & Extraction API Call
+        uploadAndExtractFile(file);
+    }
+
+    function uploadAndExtractFile(file) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/stories/parse-document/', true);
+        xhr.setRequestHeader('X-CSRFToken', csrfToken);
+
+        // Upload progress tracking
+        xhr.upload.onprogress = function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                progressBar.style.width = percentComplete + '%';
+                percentText.textContent = percentComplete + '%';
+            }
+        };
+
+        xhr.onload = function() {
+            dropzone.classList.remove('pulse-uploading');
+            
+            if (xhr.status === 200) {
+                const response = JSON.parse(xhr.responseText);
+                
+                // Show parsed text in editable editor
+                previewTextArea.value = response.text;
+                labelExtracted.classList.remove('d-none');
+                
+                // Keep record of filename for the form submit
+                assocFilename.value = response.filename;
+                
+                // Enable execution button
+                submitBtn.disabled = false;
+                progressBar.style.width = '100%';
+                percentText.textContent = 'Completed';
+            } else {
+                let errMsg = 'Failed to extract text from the document.';
+                try {
+                    const errorResponse = JSON.parse(xhr.responseText);
+                    if (errorResponse.error) errMsg = errorResponse.error;
+                    else if (errorResponse.file) errMsg = errorResponse.file.join(' ');
+                } catch(e) {}
+                
+                showAlert(errMsg);
+                progressCont.classList.add('d-none');
+            }
+        };
+
+        xhr.onerror = function() {
+            dropzone.classList.remove('pulse-uploading');
+            showAlert("A network error occurred while uploading the file.");
+            progressCont.classList.add('d-none');
+        };
+
+        xhr.send(formData);
+    }
+
+    // Enable submit button if user manually types in textarea
+    previewTextArea.addEventListener('input', () => {
+        if (previewTextArea.value.trim().length > 0) {
+            submitBtn.disabled = false;
+        } else {
+            submitBtn.disabled = true;
+        }
+    });
+
+    function polishPromptText() {
+        const promptText = previewTextArea.value.trim();
+        if (!promptText) {
+            alert("Please type or upload a story script first before polishing.");
+            return;
+        }
+
+        const polishBtn = document.getElementById('polishBtn');
+        const polishIcon = document.getElementById('polishIcon');
+        const polishSpinner = document.getElementById('polishSpinner');
+        const polishBtnText = document.getElementById('polishBtnText');
+        const polishAlert = document.getElementById('polishAlert');
+        const polishProvider = document.getElementById('polishProvider');
+        const polishTime = document.getElementById('polishTime');
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+        // Setup loading visual indicators
+        polishBtn.disabled = true;
+        polishIcon.classList.add('d-none');
+        polishSpinner.classList.remove('d-none');
+        polishBtnText.textContent = "Polishing...";
+        polishAlert.classList.add('d-none');
+
+        fetch('/api/stories/polish/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({ prompt: promptText })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Polishing request failed");
+            return res.json();
+        })
+        .then(data => {
+            previewTextArea.value = data.polished_text;
+            
+            // Set alert success metadata
+            polishProvider.textContent = data.provider;
+            polishTime.textContent = parseFloat(data.execution_time).toFixed(2);
+            polishAlert.classList.remove('d-none');
+            
+            submitBtn.disabled = false;
+        })
+        .catch(err => {
+            console.error("Polishing error:", err);
+            alert("Failed to polish prompt. Please check your network or try again.");
+        })
+        .finally(() => {
+            polishBtn.disabled = false;
+            polishIcon.classList.remove('d-none');
+            polishSpinner.classList.add('d-none');
+            polishBtnText.textContent = "AI Polish";
+        });
+    }
+
+    // Submit Story and start pipeline
+    document.getElementById('submitStoryForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const titleInput = document.getElementById('projectTitle');
+        const promptText = previewTextArea.value.trim();
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        
+        if (!promptText) {
+            alert("Story text preview cannot be empty.");
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Triggering Pipeline...';
+
+        // Prepare request body
+        const requestData = {
+            title: titleInput.value.trim(),
+            prompt: promptText,
+            source_filename: assocFilename.value
+        };
+
+        fetch('/api/stories/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Creation request failed");
+            return res.json();
+        })
+        .then(data => {
+            // Redirect to processing page (or detailed pipeline page)
+            window.location.href = `/story/${data.id}/`;
+        })
+        .catch(err => {
+            console.error("Error launching pipeline: ", err);
+            alert("Could not start animation engine. Please make sure Redis and Celery are running.");
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Create & Run Pipeline';
+        });
+    });
+</script>
+{% endblock %}

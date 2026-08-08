@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+
+{% block title %}Text2Animation Studio - Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Hero Banner -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <div class="glass-panel p-5 text-center text-md-start d-md-flex align-items-center justify-content-between position-relative overflow-hidden">
+                <!-- Background ambient glows -->
+                <div style="position: absolute; width: 300px; height: 300px; background: radial-gradient(circle, rgba(99,102,241,0.2) 0%, rgba(0,0,0,0) 70%); top: -100px; right: -50px; pointer-events: none;"></div>
+                <div style="position: absolute; width: 300px; height: 300px; background: radial-gradient(circle, rgba(217,70,239,0.15) 0%, rgba(0,0,0,0) 70%); bottom: -100px; left: -50px; pointer-events: none;"></div>
+                
+                <div class="mb-4 mb-md-0 z-3">
+                    <h1 class="display-5 fw-bold mb-2 logo-gradient">Generate Cinematic Animations from Text</h1>
+                    <p class="text-muted fs-5 mb-0">Describe a storyline, and watch our AI and FFmpeg engines translate it into a fully-rendered storyboard video.</p>
+                </div>
+                <div class="z-3">
+                    <a href="{% url 'dashboard:upload' %}" class="btn btn-gradient-primary btn-lg">
+                        <i class="fa-solid fa-cloud-arrow-up me-2"></i>Upload Script / File
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Story Generation Panel -->
+        <div class="col-lg-4" id="generate-form">
+            <div class="glass-panel p-4 position-sticky" style="top: 100px;">
+                <h3 class="h4 mb-4 d-flex align-items-center">
+                    <i class="fa-solid fa-compass text-indigo me-2" style="color: #818cf8;"></i> Create New Animation
+                </h3>
+                
+                <form id="createStoryForm">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="projectTitle" class="form-label text-muted small uppercase fw-bold">Project Name (Optional)</label>
+                        <input type="text" class="form-control bg-dark border-secondary text-white py-2" id="projectTitle" placeholder="e.g. Whispers of the Nebula" style="border-radius: 8px;">
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label for="storyPrompt" class="form-label text-muted small uppercase fw-bold">Animation Prompt</label>
+                        <textarea class="form-control bg-dark border-secondary text-white" id="storyPrompt" rows="5" required placeholder="Describe your animation scenario here in detail. For example: 'A lonely astronaut steps onto a neon-lit alien city square, looking up at an orbital ring structure in the sky.'" style="border-radius: 8px; resize: none;"></textarea>
+                        <div class="form-text text-muted small">
+                            Our pipelines will parse this prompt into scenes. Have a PDF, DOCX, or TXT document? 
+                            <a href="{% url 'dashboard:upload' %}" class="text-indigo text-decoration-none fw-bold">Upload File</a> instead.
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-gradient-primary w-100 py-3 d-flex align-items-center justify-content-center gap-2">
+                        <span id="submitSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        <i id="submitIcon" class="fa-solid fa-wand-magic-sparkles"></i> 
+                        <span id="submitText">Generate Animation</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Animation Dashboard Catalog -->
+        <div class="col-lg-8">
+            <div class="d-flex align-items-center justify-content-between mb-4">
+                <h3 class="h4 mb-0">Your Projects</h3>
+                <span class="text-muted small" id="totalCount">{{ stories.count }} project(s) total</span>
+            </div>
+            
+            <div id="storiesContainer" class="d-flex flex-column gap-3">
+                {% if not stories %}
+                    <div class="glass-panel p-5 text-center" id="emptyState">
+                        <i class="fa-solid fa-photo-film fs-1 text-muted mb-3 d-block"></i>
+                        <h4 class="h5">No animations generated yet</h4>
+                        <p class="text-muted small">Fill out the prompt form to begin rendering your first storyboard animation project.</p>
+                    </div>
+                {% else %}
+                    {% for story in stories %}
+                        <div class="glass-panel glass-panel-hover p-4 d-md-flex align-items-center justify-content-between" data-story-id="{{ story.id }}">
+                            <div class="mb-3 mb-md-0">
+                                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                    <h4 class="h5 mb-0 text-white">{{ story.title }}</h4>
+                                    
+                                    {% if story.status == 'DRAFT' %}
+                                        <span class="badge badge-status badge-draft" data-badge-status="{{ story.id }}">Draft</span>
+                                    {% elif story.status == 'PROCESSING' %}
+                                        <span class="badge badge-status badge-processing" data-badge-status="{{ story.id }}">
+                                            <i class="fa-solid fa-circle-notch fa-spin me-1"></i>Processing
+                                        </span>
+                                    {% elif story.status == 'COMPLETED' %}
+                                        <span class="badge badge-status badge-completed" data-badge-status="{{ story.id }}">Completed</span>
+                                    {% else %}
+                                        <span class="badge badge-status badge-failed" data-badge-status="{{ story.id }}">Failed</span>
+                                    {% endif %}
+                                </div>
+                                <p class="text-muted small mb-2 text-truncate-2" style="max-width: 500px;">{{ story.prompt }}</p>
+                                <div class="d-flex align-items-center gap-3 text-muted small">
+                                    <span><i class="fa-regular fa-clock me-1"></i>{{ story.created_at|date:"M d, Y H:i" }}</span>
+                                    <span data-scenes-count="{{ story.id }}"><i class="fa-solid fa-clapperboard me-1"></i>{{ story.scenes.count }} Scene(s)</span>
+                                </div>
+                            </div>
+                            <div>
+                                <a href="{% url 'dashboard:detail' story.id %}" class="btn btn-glass px-4 py-2 d-inline-flex align-items-center gap-2">
+                                    View Studio <i class="fa-solid fa-chevron-right fs-7"></i>
+                                </a>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById('createStoryForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const titleInput = document.getElementById('projectTitle');
+        const promptInput = document.getElementById('storyPrompt');
+        
+        const spinner = document.getElementById('submitSpinner');
+        const icon = document.getElementById('submitIcon');
+        const text = document.getElementById('submitText');
+        const formSubmitBtn = this.querySelector('button[type="submit"]');
+        
+        // Show Spinner
+        spinner.classList.remove('d-none');
+        icon.classList.add('d-none');
+        text.textContent = 'Launching Engine...';
+        formSubmitBtn.disabled = true;
+        
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        
+        fetch('/api/stories/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                title: titleInput.value.trim(),
+                prompt: promptInput.value.trim()
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Clear inputs
+            titleInput.value = '';
+            promptInput.value = '';
+            
+            // Revert submit button
+            spinner.classList.add('d-none');
+            icon.classList.remove('d-none');
+            text.textContent = 'Generate Animation';
+            formSubmitBtn.disabled = false;
+            
+            // Redirect to detail page of newly created story immediately
+            window.location.href = `/story/${data.id}/`;
+        })
+        .catch(error => {
+            console.error('Error creating story:', error);
+            alert('Failed to launch pipeline. Please ensure Redis and Celery worker are running.');
+            spinner.classList.add('d-none');
+            icon.classList.remove('d-none');
+            text.textContent = 'Generate Animation';
+            formSubmitBtn.disabled = false;
+        });
+    });
+
+    // Auto refresh active stories
+    function checkActiveStories() {
+        const activeBadges = document.querySelectorAll('.badge-processing');
+        if (activeBadges.length === 0) return;
+        
+        activeBadges.forEach(badge => {
+            const id = badge.getAttribute('data-badge-status');
+            fetch(`/api/stories/${id}/`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status !== 'PROCESSING') {
+                        // Status changed, reload dashboard list to update statuses cleanly
+                        window.location.reload();
+                    }
+                });
+        });
+    }
+
+    // Poll running statuses every 3 seconds
+    setInterval(checkActiveStories, 3000);
+</script>
+<style>
+    .text-truncate-2 {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;  
+        overflow: hidden;
+    }
+    .fs-7 { font-size: 0.75rem; }
+    .text-indigo { color: #818cf8; }
+</style>
+{% endblock %}

@@ -1,0 +1,602 @@
+{% extends 'base.html' %}
+
+{% block title %}Text2Animation Studio - {{ story.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .step-node {
+        display: flex;
+        align-items: flex-start;
+        position: relative;
+        padding-bottom: 24px;
+    }
+    
+    .step-node::before {
+        content: '';
+        position: absolute;
+        left: 15px;
+        top: 30px;
+        bottom: 0;
+        width: 2px;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    
+    .step-node:last-child::before {
+        display: none;
+    }
+    
+    .step-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.85rem;
+        z-index: 2;
+        transition: all 0.3s ease;
+    }
+    
+    .step-icon-pending {
+        background: #1f2937;
+        color: #6b7280;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .step-icon-running {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
+    }
+    
+    .step-icon-success {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    
+    .step-icon-failed {
+        background: rgba(239, 68, 68, 0.15);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    
+    .console-log {
+        background: #090b0f;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 0.85rem;
+        color: #38bdf8;
+        max-height: 250px;
+        overflow-y: auto;
+        padding: 15px;
+    }
+    
+    .scene-card-img {
+        width: 100%;
+        aspect-ratio: 16/9;
+        object-fit: cover;
+        border-radius: 8px;
+        background: #111317;
+    }
+    
+    /* Live processing progress bars */
+    .processing-pulse {
+        animation: pulse-glow 2s infinite ease-in-out;
+    }
+    
+    @keyframes pulse-glow {
+        0%, 100% {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+        50% {
+            box-shadow: 0 0 35px rgba(99, 102, 241, 0.55);
+            border-color: rgba(99, 102, 241, 0.7);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Breadcrumb and title -->
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-8">
+            <a href="{% url 'dashboard:index' %}" class="btn btn-link text-muted p-0 mb-2 text-decoration-none small">
+                <i class="fa-solid fa-chevron-left me-1"></i> Back to Dashboard
+            </a>
+            <h1 class="h2 mb-1" id="storyTitle">{{ story.title }}</h1>
+            <p class="text-muted small mb-0">Project ID: #<span id="storyId">{{ story.id }}</span> | Created: {{ story.created_at|date:"M d, Y H:i" }}</p>
+        </div>
+        <div class="col-md-4 text-md-end mt-3 mt-md-0">
+            <span id="mainStatusBadge" class="badge badge-status {% if story.status == 'DRAFT' %}badge-draft{% elif story.status == 'PROCESSING' %}badge-processing{% elif story.status == 'COMPLETED' %}badge-completed{% else %}badge-failed{% endif %}">
+                {{ story.get_status_display }}
+            </span>
+            <button id="retryBtn" class="btn btn-glass ms-2 d-none" onclick="retryPipeline()">
+                <i class="fa-solid fa-rotate-right me-1"></i> Retry Render
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="row g-4">
+        <!-- Visual Presentation Player / Status -->
+        <div class="col-lg-7">
+            <!-- Video Presentation Container -->
+            <div id="playerContainer" class="glass-panel p-3 mb-4 {% if story.status == 'PROCESSING' %}processing-pulse{% endif %}" style="min-height: 400px; display: flex; flex-direction: column; justify-content: center;">
+                {% if story.status == 'COMPLETED' and story.final_video %}
+                    <video id="mainVideoPlayer" controls class="w-100 rounded-3 shadow-lg" style="aspect-ratio: 16/9; max-height: 480px; background: #000;">
+                        <source src="{{ story.final_video.url }}" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                {% elif story.status == 'PROCESSING' %}
+                    <div class="text-center p-5" id="processingStatusScreen">
+                        <div class="spinner-border text-indigo mb-4" role="status" style="width: 3.5rem; height: 3.5rem; color: #818cf8;">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <h3 class="h4">Rendering Video Storyboard</h3>
+                        <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Renders images, generates narration tracks, overlays subtitle captions, and concatenates all scenes into a final animation video.</p>
+                        <div class="progress bg-dark mx-auto mt-4" style="height: 6px; max-width: 400px;">
+                            <div id="pipelineProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-indigo" role="progressbar" style="width: 15%; background-color: #6366f1;" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div id="activeStepText" class="text-muted small mt-2">Initializing project environment...</div>
+                    </div>
+                {% elif story.status == 'FAILED' %}
+                    <div class="text-center p-5 text-danger" id="failedStatusScreen">
+                        <i class="fa-solid fa-triangle-exclamation fs-1 mb-3"></i>
+                        <h3 class="h4 text-white">Pipeline Execution Failed</h3>
+                        <p class="text-muted small max-width-400 mx-auto">An error occurred during scene rendering or FFmpeg concatenation. Inspect the console logs below to diagnose the issue.</p>
+                        <button class="btn btn-gradient-primary btn-sm mt-3 px-4" onclick="retryPipeline()">
+                            <i class="fa-solid fa-arrow-rotate-right me-1"></i> Re-trigger Render
+                        </button>
+                    </div>
+                {% else %}
+                    <div class="text-center p-5" id="draftStatusScreen">
+                        <i class="fa-solid fa-film fs-1 text-muted mb-3"></i>
+                        <h3 class="h4">Animation Pending</h3>
+                        <p class="text-muted small">This project is currently in draft. Trigger the renderer pipeline to begin processing.</p>
+                        <button class="btn btn-gradient-primary btn-sm mt-3 px-4" onclick="retryPipeline()">
+                            <i class="fa-solid fa-play me-1"></i> Trigger Pipeline
+                        </button>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <!-- Metadata & Prompt details -->
+            <div class="glass-panel p-4 mb-4">
+                <h3 class="h5 mb-3">Animation Blueprint Prompt</h3>
+                <p class="text-muted" style="white-space: pre-line; line-height: 1.6;">{{ story.prompt }}</p>
+            </div>
+
+            <!-- Execution Logs -->
+            <div class="glass-panel p-4">
+                <h3 class="h5 mb-3 d-flex align-items-center justify-content-between">
+                    <span><i class="fa-solid fa-terminal me-2 small text-muted"></i>Engine Pipeline Console</span>
+                    <button class="btn btn-sm btn-glass text-muted" style="font-size: 0.75rem;" onclick="clearLogsConsole()">Clear Display</button>
+                </h3>
+                <div class="console-log" id="logsConsole">
+                    <!-- Logs dynamically appended via JS -->
+                    [SYSTEM] Log console initialized.<br>
+                    {% for log in story.logs.all %}
+                        [{{ log.started_at|date:"H:i:s" }}] [{{ log.step }}] ({{ log.status }}): {{ log.log_message }}
+                        {% if log.duration_seconds %} (took {{ log.duration_seconds|stringformat:".2f" }}s){% endif %}<br>
+                        {% if log.error_traceback %}
+                            <span class="text-danger">{{ log.error_traceback }}</span><br>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Pipeline Nodes & Scenes Listing -->
+        <div class="col-lg-5">
+            <!-- Step Monitor -->
+            <div class="glass-panel p-4 mb-4">
+                <h3 class="h5 mb-4">Pipeline Execution Nodes</h3>
+                <div class="d-flex flex-column">
+                    <!-- Story Initialized -->
+                    <div class="step-node" id="step-node-STORY_INITIALIZATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-STORY_INITIALIZATION"><i class="fa-solid fa-power-off"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">Initialization</h5>
+                            <p class="text-muted small mb-0">Prepare workspace and DB registries</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Script Generation -->
+                    <div class="step-node" id="step-node-SCRIPT_GENERATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-SCRIPT_GENERATION"><i class="fa-solid fa-align-left"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">Storyboard Drafting</h5>
+                            <p class="text-muted small mb-0">Generate scene definitions & scripts</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Image Generation -->
+                    <div class="step-node" id="step-node-IMAGE_GENERATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-IMAGE_GENERATION"><i class="fa-solid fa-image"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">Asset Rendering</h5>
+                            <p class="text-muted small mb-0">Render scene image backgrounds via PIL</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Video Generation -->
+                    <div class="step-node" id="step-node-VIDEO_GENERATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-VIDEO_GENERATION"><i class="fa-solid fa-video"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">Scene Encoding & Captions</h5>
+                            <p class="text-muted small mb-0">Encode clips and overlay voice subtitle layers</p>
+                        </div>
+                    </div>
+                    
+                    <!-- FFmpeg Stitching -->
+                    <div class="step-node" id="step-node-FFMPEG_STITCHING">
+                        <div class="step-icon step-icon-pending" id="step-icon-FFMPEG_STITCHING"><i class="fa-solid fa-film"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">FFmpeg Stitching</h5>
+                            <p class="text-muted small mb-0">Concatenate clips and render final master</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storyboard Scenes -->
+            <div>
+                <h3 class="h5 mb-3 d-flex align-items-center justify-content-between">
+                    <span>Generated Storyboard Scenes</span>
+                    <span class="badge bg-secondary-subtle text-white small" id="scenesBadge">{{ story.scenes.count }} scene(s)</span>
+                </h3>
+                <div id="scenesContainer" class="d-flex flex-column gap-3">
+                    <!-- Scenes dynamically populated via JS -->
+                    {% if not story.scenes.all %}
+                        <div class="glass-panel p-4 text-center text-muted small" id="scenesPlaceholder">
+                            Storyboard scenes will appear here once the Drafting stage is completed.
+                        </div>
+                    {% else %}
+                        {% for scene in story.scenes.all %}
+                            <div class="glass-panel p-3 scene-item" data-scene-num="{{ scene.scene_number }}">
+                                <div class="row g-3">
+                                    <div class="col-md-5">
+                                        {% if scene.image_file %}
+                                            <img src="{{ scene.image_file.url }}" class="scene-card-img" alt="Scene image">
+                                        {% else %}
+                                            <div class="scene-card-img d-flex align-items-center justify-content-center text-muted">
+                                                <i class="fa-regular fa-image fs-4"></i>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="col-md-7 d-flex flex-column justify-content-between">
+                                        <div>
+                                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                                <h5 class="h6 mb-0 text-white">Scene #{{ scene.scene_number }}</h5>
+                                                <span class="badge text-bg-dark text-muted small">{{ scene.duration }}s</span>
+                                            </div>
+                                            <p class="text-muted small mb-2" style="font-size: 0.8rem; line-height: 1.4;"><strong>Visuals:</strong> {{ scene.prompt }}</p>
+                                        </div>
+                                        <div class="border-top border-secondary pt-2">
+                                            <p class="mb-0 small text-indigo" style="font-size: 0.8rem; color: #a5b4fc;"><i class="fa-solid fa-quote-left me-1"></i>{{ scene.narration_text }}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const storyId = "{{ story.id }}";
+    let isProcessing = {% if story.status == 'PROCESSING' %}true{% else %}false{% endif %};
+    let currentLogsCount = 0;
+    
+    function updateStepsVisuals(logs) {
+        // Step node map helper
+        const stepStatusMap = {
+            'STORY_INITIALIZATION': 'pending',
+            'SCRIPT_GENERATION': 'pending',
+            'IMAGE_GENERATION': 'pending',
+            'VIDEO_GENERATION': 'pending',
+            'FFMPEG_STITCHING': 'pending'
+        };
+
+        logs.forEach(log => {
+            if (log.step === 'COMPLETED' || log.step === 'FAILED') return;
+            // Map run status
+            if (log.status === 'RUNNING') {
+                stepStatusMap[log.step] = 'running';
+            } else if (log.status === 'SUCCESS') {
+                stepStatusMap[log.step] = 'success';
+            } else if (log.status === 'FAILED') {
+                stepStatusMap[log.step] = 'failed';
+            }
+        });
+
+        // Set running/success cascades
+        let hasFailed = false;
+        Object.entries(stepStatusMap).forEach(([step, state]) => {
+            const iconElement = document.getElementById(`step-icon-${step}`);
+            if (!iconElement) return;
+
+            // Reset classes
+            iconElement.className = 'step-icon';
+            
+            if (state === 'running') {
+                iconElement.classList.add('step-icon-running');
+                iconElement.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
+            } else if (state === 'success') {
+                iconElement.classList.add('step-icon-success');
+                iconElement.innerHTML = '<i class="fa-solid fa-check"></i>';
+            } else if (state === 'failed') {
+                iconElement.classList.add('step-icon-failed');
+                iconElement.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+                hasFailed = true;
+            } else {
+                iconElement.classList.add('step-icon-pending');
+                iconElement.innerHTML = '<i class="fa-solid fa-ellipsis"></i>';
+            }
+        });
+        
+        return hasFailed;
+    }
+
+    function appendConsoleLogs(logs) {
+        const consoleEl = document.getElementById('logsConsole');
+        if (logs.length === currentLogsCount) return;
+        
+        let logsHtml = '';
+        logs.forEach(log => {
+            const timeStr = new Date(log.started_at).toLocaleTimeString([], { hour12: false });
+            const tookStr = log.duration_seconds ? ` (took ${parseFloat(log.duration_seconds).toFixed(2)}s)` : '';
+            
+            let statusColor = '';
+            if (log.status === 'SUCCESS') statusColor = 'text-success';
+            else if (log.status === 'FAILED') statusColor = 'text-danger';
+            
+            logsHtml += `[${timeStr}] [${log.step}] (<span class="${statusColor}">${log.status}</span>): ${log.log_message}${tookStr}<br>`;
+            if (log.error_traceback) {
+                logsHtml += `<span class="text-danger d-block mt-1 ps-3" style="white-space: pre-wrap;">${log.error_traceback}</span>`;
+            }
+        });
+        
+        consoleEl.innerHTML = logsHtml;
+        consoleEl.scrollTop = consoleEl.scrollHeight; // Auto-scroll to bottom
+        currentLogsCount = logs.length;
+    }
+
+    function populateScenes(scenes) {
+        const container = document.getElementById('scenesContainer');
+        const badge = document.getElementById('scenesBadge');
+        
+        if (scenes.length === 0) return;
+        
+        badge.textContent = `${scenes.length} scene(s)`;
+        
+        const placeholder = document.getElementById('scenesPlaceholder');
+        if (placeholder) placeholder.remove();
+        
+        let scenesHtml = '';
+        scenes.forEach(scene => {
+            const imgHtml = scene.image_file 
+                ? `<img src="${scene.image_file}" class="scene-card-img" alt="Scene background">`
+                : `<div class="scene-card-img d-flex align-items-center justify-content-center text-muted">
+                     <i class="fa-regular fa-image fs-4"></i>
+                   </div>`;
+                   
+            scenesHtml += `
+                <div class="glass-panel p-3 scene-item" data-scene-num="${scene.scene_number}">
+                    <div class="row g-3">
+                        <div class="col-md-5">
+                            ${imgHtml}
+                        </div>
+                        <div class="col-md-7 d-flex flex-column justify-content-between">
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <h5 class="h6 mb-0 text-white">Scene #${scene.scene_number}</h5>
+                                    <span class="badge text-bg-dark text-muted small">${scene.duration}s</span>
+                                </div>
+                                <p class="text-muted small mb-2" style="font-size: 0.8rem; line-height: 1.4;"><strong>Visuals:</strong> ${scene.prompt}</p>
+                            </div>
+                            <div class="border-top border-secondary pt-2">
+                                <p class="mb-0 small text-indigo" style="font-size: 0.8rem; color: #a5b4fc;"><i class="fa-solid fa-quote-left me-1"></i>${scene.narration_text}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = scenesHtml;
+    }
+
+    function updateProgressBar(logs) {
+        const bar = document.getElementById('pipelineProgressBar');
+        const stepText = document.getElementById('activeStepText');
+        if (!bar || logs.length === 0) return;
+        
+        const lastLog = logs[logs.length - 1];
+        
+        let progress = 15;
+        let desc = 'Initializing project environment...';
+        
+        logs.forEach(log => {
+            if (log.step === 'SCRIPT_GENERATION' && log.status === 'SUCCESS') {
+                progress = 35;
+                desc = 'Storyboard scenes generated. Rendering assets...';
+            } else if (log.step === 'IMAGE_GENERATION' && log.status === 'SUCCESS') {
+                progress = 55;
+                desc = 'Image backgrounds rendered. Stitching clips...';
+            } else if (log.step === 'VIDEO_GENERATION' && log.status === 'SUCCESS') {
+                progress = 75;
+                desc = 'Video encoding & overlays completed. Running FFmpeg Stitcher...';
+            } else if (log.step === 'FFMPEG_STITCHING' && log.status === 'SUCCESS') {
+                progress = 90;
+                desc = 'Stitching final animation sequence...';
+            }
+        });
+        
+        if (lastLog.step === 'COMPLETED') {
+            progress = 100;
+            desc = 'Stitching finished! Finalizing media files.';
+        } else if (lastLog.status === 'FAILED') {
+            progress = 100;
+            desc = 'Pipeline failed.';
+        }
+        
+        bar.style.width = `${progress}%`;
+        bar.setAttribute('aria-valuenow', progress);
+        stepText.textContent = desc;
+    }
+
+    function refreshStoryData() {
+        fetch(`/api/stories/${storyId}/`)
+            .then(res => res.json())
+            .then(data => {
+                // Update Badge
+                const badge = document.getElementById('mainStatusBadge');
+                badge.className = 'badge badge-status';
+                
+                if (data.status === 'DRAFT') {
+                    badge.classList.add('badge-draft');
+                    badge.textContent = 'Draft';
+                    document.getElementById('retryBtn').classList.remove('d-none');
+                } else if (data.status === 'PROCESSING') {
+                    badge.classList.add('badge-processing');
+                    badge.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-1"></i>Processing';
+                    document.getElementById('retryBtn').classList.add('d-none');
+                } else if (data.status === 'COMPLETED') {
+                    badge.classList.add('badge-completed');
+                    badge.textContent = 'Completed';
+                    document.getElementById('retryBtn').classList.remove('d-none');
+                    isProcessing = false;
+                } else if (data.status === 'FAILED') {
+                    badge.classList.add('badge-failed');
+                    badge.textContent = 'Failed';
+                    document.getElementById('retryBtn').classList.remove('d-none');
+                    isProcessing = false;
+                }
+                
+                // Update Console Logs
+                appendConsoleLogs(data.logs);
+                
+                // Update Steps Visuals
+                updateStepsVisuals(data.logs);
+                
+                // Update Storyboard Scenes
+                populateScenes(data.scenes);
+                
+                // Update Progressbar if processing
+                if (data.status === 'PROCESSING') {
+                    updateProgressBar(data.logs);
+                } else {
+                    // Update Player Container if state changed from processing to completed
+                    const playerCont = document.getElementById('playerContainer');
+                    playerCont.classList.remove('processing-pulse');
+                    
+                    if (data.status === 'COMPLETED' && data.final_video) {
+                        playerCont.innerHTML = `
+                            <video id="mainVideoPlayer" controls class="w-100 rounded-3 shadow-lg" style="aspect-ratio: 16/9; max-height: 480px; background: #000;">
+                                <source src="${data.final_video}" type="video/mp4">
+                                Your browser does not support the video tag.
+                            </video>
+                        `;
+                    } else if (data.status === 'FAILED') {
+                        playerCont.innerHTML = `
+                            <div class="text-center p-5 text-danger" id="failedStatusScreen">
+                                <i class="fa-solid fa-triangle-exclamation fs-1 mb-3"></i>
+                                <h3 class="h4 text-white">Pipeline Execution Failed</h3>
+                                <p class="text-muted small max-width-400 mx-auto">An error occurred during scene rendering or FFmpeg concatenation. Inspect the console logs below to diagnose the issue.</p>
+                                <button class="btn btn-gradient-primary btn-sm mt-3 px-4" onclick="retryPipeline()">
+                                    <i class="fa-solid fa-arrow-rotate-right me-1"></i> Re-trigger Render
+                                </button>
+                            </div>
+                        `;
+                    }
+                }
+                
+                // Stop polling if completed or failed
+                if (!isProcessing) {
+                    clearInterval(pollInterval);
+                }
+            })
+            .catch(err => {
+                console.error("Error refreshing story details: ", err);
+            });
+    }
+
+    function retryPipeline() {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+        
+        fetch(`/api/stories/${storyId}/retry/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            }
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Retry request failed");
+            return res.json();
+        })
+        .then(data => {
+            // Put UI in loading state
+            isProcessing = true;
+            document.getElementById('retryBtn').classList.add('d-none');
+            
+            const playerCont = document.getElementById('playerContainer');
+            playerCont.className = 'glass-panel p-3 mb-4 processing-pulse';
+            playerCont.innerHTML = `
+                <div class="text-center p-5" id="processingStatusScreen">
+                    <div class="spinner-border text-indigo mb-4" role="status" style="width: 3.5rem; height: 3.5rem; color: #818cf8;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <h3 class="h4">Rendering Video Storyboard</h3>
+                    <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Renders images, generates narration tracks, overlays subtitle captions, and concatenates all scenes into a final animation video.</p>
+                    <div class="progress bg-dark mx-auto mt-4" style="height: 6px; max-width: 400px;">
+                        <div id="pipelineProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-indigo" role="progressbar" style="width: 15%; background-color: #6366f1;" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <div id="activeStepText" class="text-muted small mt-2">Re-initializing project environment...</div>
+                </div>
+            `;
+            
+            // Re-start polling
+            clearInterval(pollInterval);
+            pollInterval = setInterval(refreshStoryData, 2000);
+            
+            // Immediately run a refresh
+            refreshStoryData();
+        })
+        .catch(err => {
+            alert("Failed to trigger animation. Ensure Celery and Redis broker are running.");
+        });
+    }
+
+    function clearLogsConsole() {
+        document.getElementById('logsConsole').innerHTML = '[CONSOLE] Display cleared.';
+        currentLogsCount = 0;
+    }
+
+    // Set polling interval if currently processing
+    let pollInterval;
+    if (isProcessing) {
+        pollInterval = setInterval(refreshStoryData, 2000);
+        // Run immediately on page load
+        refreshStoryData();
+    } else {
+        // Run once to initialize steps state visual checkboxes
+        fetch(`/api/stories/${storyId}/`)
+            .then(res => res.json())
+            .then(data => {
+                updateStepsVisuals(data.logs);
+                appendConsoleLogs(data.logs);
+            });
+    }
+</script>
+{% endblock %}

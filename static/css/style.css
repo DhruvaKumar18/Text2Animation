@@ -1,0 +1,7 @@
+/* Text2Animation Global Custom Styles */
+.glow-accent-primary {
+    text-shadow: 0 0 15px rgba(99, 102, 241, 0.6);
+}
+.glow-accent-secondary {
+    text-shadow: 0 0 15px rgba(217, 70, 239, 0.6);
+}
