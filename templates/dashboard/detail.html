@@ -138,7 +138,7 @@
                             <span class="visually-hidden">Loading...</span>
                         </div>
                         <h3 class="h4">Rendering Video Storyboard</h3>
-                        <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Renders images, generates narration tracks, overlays subtitle captions, and concatenates all scenes into a final animation video.</p>
+                        <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Prepares project registries, extracts scripts, and splits the story into storyboard scenes.</p>
                         <div class="progress bg-dark mx-auto mt-4" style="height: 6px; max-width: 400px;">
                             <div id="pipelineProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-indigo" role="progressbar" style="width: 15%; background-color: #6366f1;" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100"></div>
                         </div>
@@ -215,21 +215,30 @@
                         </div>
                     </div>
                     
-                    <!-- Image Generation -->
-                    <div class="step-node" id="step-node-IMAGE_GENERATION">
-                        <div class="step-icon step-icon-pending" id="step-icon-IMAGE_GENERATION"><i class="fa-solid fa-image"></i></div>
+                    <!-- Direct Video Generation -->
+                    <div class="step-node" id="step-node-DIRECT_VIDEO_GENERATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-DIRECT_VIDEO_GENERATION"><i class="fa-solid fa-video"></i></div>
                         <div class="ms-3">
-                            <h5 class="h6 mb-1">Asset Rendering</h5>
-                            <p class="text-muted small mb-0">Render scene image backgrounds via PIL</p>
+                            <h5 class="h6 mb-1">Direct Video Generation</h5>
+                            <p class="text-muted small mb-0">Generate video clips directly from prompts</p>
                         </div>
                     </div>
                     
-                    <!-- Video Generation -->
-                    <div class="step-node" id="step-node-VIDEO_GENERATION">
-                        <div class="step-icon step-icon-pending" id="step-icon-VIDEO_GENERATION"><i class="fa-solid fa-video"></i></div>
+                    <!-- Narration -->
+                    <div class="step-node" id="step-node-NARRATION">
+                        <div class="step-icon step-icon-pending" id="step-icon-NARRATION"><i class="fa-solid fa-microphone"></i></div>
                         <div class="ms-3">
-                            <h5 class="h6 mb-1">Scene Encoding & Captions</h5>
-                            <p class="text-muted small mb-0">Encode clips and overlay voice subtitle layers</p>
+                            <h5 class="h6 mb-1">Voice Narration</h5>
+                            <p class="text-muted small mb-0">Generate scene narration tracks</p>
+                        </div>
+                    </div>
+
+                    <!-- Background Music -->
+                    <div class="step-node" id="step-node-BACKGROUND_MUSIC">
+                        <div class="step-icon step-icon-pending" id="step-icon-BACKGROUND_MUSIC"><i class="fa-solid fa-music"></i></div>
+                        <div class="ms-3">
+                            <h5 class="h6 mb-1">Background Music</h5>
+                            <p class="text-muted small mb-0">Add background audio track</p>
                         </div>
                     </div>
                     
@@ -261,11 +270,20 @@
                             <div class="glass-panel p-3 scene-item" data-scene-num="{{ scene.scene_number }}">
                                 <div class="row g-3">
                                     <div class="col-md-5">
-                                        {% if scene.image_file %}
-                                            <img src="{{ scene.image_file.url }}" class="scene-card-img" alt="Scene image">
+                                        {% if scene.video_file %}
+                                            <video src="{{ scene.video_file.url }}" controls class="scene-card-img" style="max-height: 200px; background: #000;"></video>
                                         {% else %}
-                                            <div class="scene-card-img d-flex align-items-center justify-content-center text-muted">
-                                                <i class="fa-regular fa-image fs-4"></i>
+                                            <div class="scene-card-img d-flex flex-column align-items-center justify-content-center text-muted gap-2" style="background: rgba(255,255,255,0.03);">
+                                                <i class="fa-solid fa-video fs-4"></i>
+                                                {% if scene.status == 'PENDING' %}
+                                                    <span class="badge bg-dark text-muted small">Waiting</span>
+                                                {% elif scene.status == 'GENERATING' %}
+                                                    <span class="badge bg-warning text-dark small">Generating</span>
+                                                {% elif scene.status == 'FAILED' %}
+                                                    <span class="badge bg-danger text-white small">Failed</span>
+                                                {% else %}
+                                                    <span class="badge bg-secondary text-white small">Waiting</span>
+                                                {% endif %}
                                             </div>
                                         {% endif %}
                                     </div>
@@ -273,7 +291,12 @@
                                         <div>
                                             <div class="d-flex align-items-center justify-content-between mb-1">
                                                 <h5 class="h6 mb-0 text-white">Scene #{{ scene.scene_number }}</h5>
-                                                <span class="badge text-bg-dark text-muted small">{{ scene.duration }}s</span>
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <span class="badge text-bg-dark text-muted small">{{ scene.duration }}s</span>
+                                                    <button class="btn btn-sm btn-glass p-1 px-2 text-muted hover-white border-0" title="Regenerate Video" onclick="regenerateSceneVideo({{ scene.scene_number }})">
+                                                        <i class="fa-solid fa-rotate small"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                             <p class="text-muted small mb-2" style="font-size: 0.8rem; line-height: 1.4;"><strong>Visuals:</strong> {{ scene.prompt }}</p>
                                         </div>
@@ -303,8 +326,9 @@
         const stepStatusMap = {
             'STORY_INITIALIZATION': 'pending',
             'SCRIPT_GENERATION': 'pending',
-            'IMAGE_GENERATION': 'pending',
-            'VIDEO_GENERATION': 'pending',
+            'DIRECT_VIDEO_GENERATION': 'pending',
+            'NARRATION': 'pending',
+            'BACKGROUND_MUSIC': 'pending',
             'FFMPEG_STITCHING': 'pending'
         };
 
@@ -385,23 +409,35 @@
         
         let scenesHtml = '';
         scenes.forEach(scene => {
-            const imgHtml = scene.image_file 
-                ? `<img src="${scene.image_file}" class="scene-card-img" alt="Scene background">`
-                : `<div class="scene-card-img d-flex align-items-center justify-content-center text-muted">
-                     <i class="fa-regular fa-image fs-4"></i>
+            let statusClass = 'bg-secondary';
+            if (scene.status === 'PENDING') statusClass = 'bg-dark text-muted';
+            else if (scene.status === 'GENERATING') statusClass = 'bg-warning text-dark';
+            else if (scene.status === 'COMPLETED') statusClass = 'bg-success text-white';
+            else if (scene.status === 'FAILED') statusClass = 'bg-danger text-white';
+
+            const videoHtml = scene.video_file 
+                ? `<video src="${scene.video_file}" controls class="scene-card-img" style="max-height: 200px; background: #000;"></video>`
+                : `<div class="scene-card-img d-flex flex-column align-items-center justify-content-center text-muted gap-2" style="background: rgba(255,255,255,0.03);">
+                     <i class="fa-solid fa-video fs-4"></i>
+                     <span class="badge ${statusClass} small">${scene.status_display}</span>
                    </div>`;
                    
             scenesHtml += `
                 <div class="glass-panel p-3 scene-item" data-scene-num="${scene.scene_number}">
                     <div class="row g-3">
                         <div class="col-md-5">
-                            ${imgHtml}
+                            ${videoHtml}
                         </div>
                         <div class="col-md-7 d-flex flex-column justify-content-between">
                             <div>
                                 <div class="d-flex align-items-center justify-content-between mb-1">
                                     <h5 class="h6 mb-0 text-white">Scene #${scene.scene_number}</h5>
-                                    <span class="badge text-bg-dark text-muted small">${scene.duration}s</span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge text-bg-dark text-muted small">${scene.duration}s</span>
+                                        <button class="btn btn-sm btn-glass p-1 px-2 text-muted hover-white border-0" title="Regenerate Video" onclick="regenerateSceneVideo(${scene.scene_number})">
+                                            <i class="fa-solid fa-rotate small"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 <p class="text-muted small mb-2" style="font-size: 0.8rem; line-height: 1.4;"><strong>Visuals:</strong> ${scene.prompt}</p>
                             </div>
@@ -416,7 +452,7 @@
         container.innerHTML = scenesHtml;
     }
 
-    function updateProgressBar(logs) {
+    function updateProgressBar(logs, scenes) {
         const bar = document.getElementById('pipelineProgressBar');
         const stepText = document.getElementById('activeStepText');
         if (!bar || logs.length === 0) return;
@@ -429,14 +465,24 @@
         logs.forEach(log => {
             if (log.step === 'SCRIPT_GENERATION' && log.status === 'SUCCESS') {
                 progress = 35;
-                desc = 'Storyboard scenes generated. Rendering assets...';
-            } else if (log.step === 'IMAGE_GENERATION' && log.status === 'SUCCESS') {
-                progress = 55;
-                desc = 'Image backgrounds rendered. Stitching clips...';
-            } else if (log.step === 'VIDEO_GENERATION' && log.status === 'SUCCESS') {
-                progress = 75;
-                desc = 'Video encoding & overlays completed. Running FFmpeg Stitcher...';
-            } else if (log.step === 'FFMPEG_STITCHING' && log.status === 'SUCCESS') {
+                desc = 'Storyboard scenes generated. Starting video generation...';
+            } else if (log.step === 'DIRECT_VIDEO_GENERATION' && log.status === 'RUNNING') {
+                if (scenes && scenes.length > 0) {
+                    const completed = scenes.filter(s => s.status === 'COMPLETED').length;
+                    const failed = scenes.filter(s => s.status === 'FAILED').length;
+                    const finishedCount = completed + failed;
+                    
+                    const percent = Math.round((finishedCount / scenes.length) * 45);
+                    progress = 35 + percent;
+                    desc = `Generating Scene Videos: ${finishedCount}/${scenes.length} completed...`;
+                } else {
+                    progress = 40;
+                    desc = 'Generating Scene Videos...';
+                }
+            } else if (log.step === 'DIRECT_VIDEO_GENERATION' && log.status === 'SUCCESS') {
+                progress = 80;
+                desc = 'Scene videos completed. Running FFmpeg Stitcher...';
+            } else if (log.step === 'FFMPEG_STITCHING' && log.status === 'RUNNING') {
                 progress = 90;
                 desc = 'Stitching final animation sequence...';
             }
@@ -494,7 +540,7 @@
                 
                 // Update Progressbar if processing
                 if (data.status === 'PROCESSING') {
-                    updateProgressBar(data.logs);
+                    updateProgressBar(data.logs, data.scenes);
                 } else {
                     // Update Player Container if state changed from processing to completed
                     const playerCont = document.getElementById('playerContainer');
@@ -558,7 +604,7 @@
                         <span class="visually-hidden">Loading...</span>
                     </div>
                     <h3 class="h4">Rendering Video Storyboard</h3>
-                    <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Renders images, generates narration tracks, overlays subtitle captions, and concatenates all scenes into a final animation video.</p>
+                    <p class="text-muted max-width-400 mx-auto small">Our Celery pipeline is executing. Prepares project registries, extracts scripts, and splits the story into storyboard scenes.</p>
                     <div class="progress bg-dark mx-auto mt-4" style="height: 6px; max-width: 400px;">
                         <div id="pipelineProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-indigo" role="progressbar" style="width: 15%; background-color: #6366f1;" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100"></div>
                     </div>
@@ -597,6 +643,50 @@
                 updateStepsVisuals(data.logs);
                 appendConsoleLogs(data.logs);
             });
+    }
+
+    function regenerateSceneVideo(sceneNumber) {
+        if (isProcessing) {
+            alert("Cannot regenerate video while the project pipeline is processing.");
+            return;
+        }
+        
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+        
+        if (!confirm(`Are you sure you want to regenerate the video for Scene #${sceneNumber}?`)) {
+            return;
+        }
+        
+        fetch(`/api/stories/${storyId}/generate-scene-video/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({ scene_number: sceneNumber })
+        })
+        .then(res => {
+            if (!res.ok) throw new Error("Regeneration request failed");
+            return res.json();
+        })
+        .then(data => {
+            // Set processing state to true so dashboard starts polling
+            isProcessing = true;
+            
+            // Add pulse glow to player container
+            const playerCont = document.getElementById('playerContainer');
+            playerCont.classList.add('processing-pulse');
+            
+            // Re-start polling interval
+            clearInterval(pollInterval);
+            pollInterval = setInterval(refreshStoryData, 2000);
+            
+            // Instantly refresh story data to reflect GENERATING status on the scene
+            refreshStoryData();
+        })
+        .catch(err => {
+            alert("Failed to initiate video regeneration. Ensure Celery is active.");
+        });
     }
 </script>
 {% endblock %}

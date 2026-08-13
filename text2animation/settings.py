@@ -158,9 +158,11 @@ GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
 GROQ_API_KEY = env('GROQ_API_KEY', default='')
 OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default='')
 
-# Image Generation API Keys
+# Image & Video Generation API Keys
 HF_API_KEY = env('HF_API_KEY', default='')
 FAL_KEY = env('FAL_KEY', default='')
+FAL_API_KEY = env('FAL_API_KEY', default='')
 REPLICATE_API_TOKEN = env('REPLICATE_API_TOKEN', default='')
+LUMA_API_KEY = env('LUMA_API_KEY', default='')
 
 

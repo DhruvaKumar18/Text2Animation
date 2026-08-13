@@ -1,13 +1,35 @@
 # Text2Animation Studio
 
-Text2Animation Studio is a production-ready Django web application that generates animated video storyboards based on text prompts. The project leverages **Django REST Framework (DRF)** for services APIs, **Celery** and **Redis** for distributed task queues, and **FFmpeg** to handle the heavy lifting of video clip rendering and stitching.
+Text2Animation Studio is a production-ready Django web application that processes script text and splits it into structured, storyboarded scenes. It is designed to run the following backend pipeline:
+
+```text
+Input 
+  ↓ 
+Text Extraction 
+  ↓ 
+Text Polishing 
+  ↓ 
+Scene Splitting 
+  ↓ 
+Direct Video Generation (Pauses here; implementation pending)
+  ↓ 
+Narration 
+  ↓ 
+Background Music 
+  ↓ 
+FFmpeg Stitching 
+  ↓ 
+Final Video
+```
+
+The project leverages **Django REST Framework (DRF)** for services APIs, **Celery** and **Redis** for distributed task queues, and **FFmpeg** to handle the heavy lifting of video clip rendering and stitching.
 
 ## Tech Stack Overview
 
 - **Backend Framework**: Django 5.x (Python 3.12+)
 - **API Engine**: Django REST Framework (DRF)
 - **Task Orchestration**: Celery (with Redis broker)
-- **Media Engine**: FFmpeg (via system-level commands) & Pillow (for image layouts)
+- **Media Engine**: FFmpeg (via system-level commands; direct video generation layout pending)
 - **Frontend Layer**: Bootstrap 5 (dark glassmorphism styling) & Vanilla JavaScript (polling/live update loops)
 - **Database**: PostgreSQL (with automatic SQLite fallback for rapid local prototyping)
 

@@ -109,6 +109,35 @@ class StoryViewSet(viewsets.ModelViewSet):
             return Response({'status': 'Animation pipeline re-triggered successfully.'}, status=status.HTTP_200_OK)
         return Response({'error': 'Cannot retry a pipeline that is already processing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=True, methods=['post'], url_path='generate-videos')
+    def generate_videos_endpoint(self, request, pk=None):
+        """
+        Manually triggers direct video generation for all scenes of the story.
+        """
+        story = self.get_object()
+        if story.status == Story.Status.PROCESSING:
+            return Response({'error': 'Pipeline is already processing this story.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        story.status = Story.Status.PROCESSING
+        story.save()
+
+        # Reset scenes to PENDING status
+        story.scenes.update(status=Scene.Status.PENDING)
+
+        # Log direct video generation step
+        PipelineRunLog.objects.create(
+            story=story,
+            step=PipelineRunLog.Step.DIRECT_VIDEO_GENERATION,
+            status=PipelineRunLog.Status.RUNNING,
+            log_message=f"Initiated direct video generation for {story.scenes.count()} scenes."
+        )
+
+        from pipeline.tasks import generate_scene_video
+        for scene in story.scenes.all():
+            generate_scene_video.delay(scene.id)
+
+        return Response({'status': 'Direct video generation initiated.'}, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], url_path='generate-scene-image')
     def generate_scene_image_endpoint(self, request, pk=None):
         """
@@ -144,6 +173,53 @@ class StoryViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'error': f'Failed to generate image: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='generate-scene-video')
+    def generate_scene_video_endpoint(self, request, pk=None):
+        """
+        Manually triggers direct video generation for a specific scene of this story.
+        Useful for regenerating/retrying video generation for a single scene.
+        """
+        story = self.get_object()
+        scene_number = request.data.get('scene_number')
+        
+        if not scene_number:
+            return Response({'error': 'scene_number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            scene = story.scenes.get(scene_number=scene_number)
+        except Scene.DoesNotExist:
+            return Response({'error': f'Scene #{scene_number} not found for this story.'}, status=status.HTTP_404_NOT_FOUND)
+            
+        try:
+            # Set scene status to GENERATING
+            scene.status = Scene.Status.GENERATING
+            scene.save()
+            
+            # Reset the story's status to PROCESSING so the dashboard UI polls and updates
+            if story.status != Story.Status.PROCESSING:
+                story.status = Story.Status.PROCESSING
+                story.save()
+                
+            # Log single scene video regeneration in PipelineRunLog
+            PipelineRunLog.objects.create(
+                story=story,
+                step=PipelineRunLog.Step.DIRECT_VIDEO_GENERATION,
+                status=PipelineRunLog.Status.RUNNING,
+                log_message=f"Manually re-triggered video generation for Scene #{scene_number}."
+            )
+            
+            # Trigger Celery task asynchronously
+            from pipeline.tasks import generate_scene_video
+            generate_scene_video.delay(scene.id)
+            
+            from api.serializers import SceneSerializer
+            return Response({
+                'message': f'Successfully initiated video regeneration for scene #{scene_number}.',
+                'scene': SceneSerializer(scene).data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': f'Failed to trigger video generation: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 

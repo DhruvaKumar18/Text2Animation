@@ -44,8 +44,8 @@ class Story(models.Model):
 
 class Scene(models.Model):
     class Status(models.TextChoices):
-        PENDING = 'PENDING', 'Pending'
-        GENERATING_ASSETS = 'GENERATING_ASSETS', 'Generating Assets'
+        PENDING = 'PENDING', 'Waiting'
+        GENERATING = 'GENERATING', 'Generating'
         COMPLETED = 'COMPLETED', 'Completed'
         FAILED = 'FAILED', 'Failed'
 
@@ -148,3 +148,43 @@ class Scene(models.Model):
 
     def __str__(self):
         return f"Scene #{self.scene_number} for Story {self.story_id}"
+
+
+class GeneratedVideo(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        GENERATING = 'GENERATING', 'Generating'
+        COMPLETED = 'COMPLETED', 'Completed'
+        FAILED = 'FAILED', 'Failed'
+
+    scene = models.ForeignKey(
+        Scene,
+        on_delete=models.CASCADE,
+        related_name='generated_videos'
+    )
+    provider = models.CharField(max_length=50)
+    model = models.CharField(max_length=100)
+    prompt = models.TextField()
+    video_file = models.FileField(
+        upload_to='animations/scenes/videos/',
+        null=True,
+        blank=True,
+        help_text="Locally downloaded generated video file"
+    )
+    external_job_id = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+    duration = models.FloatField(null=True, blank=True)
+    resolution = models.CharField(max_length=20, blank=True, null=True)
+    fps = models.IntegerField(null=True, blank=True)
+    generation_time = models.FloatField(null=True, blank=True, help_text="Total API execution time in seconds")
+    api_response = models.TextField(blank=True, null=True, help_text="Raw API JSON response text")
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Video for Scene {self.scene.scene_number} ({self.provider}) - {self.status}"

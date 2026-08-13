@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from stories.models import Story, Scene
+from stories.models import Story, Scene, GeneratedVideo
 from history.models import PipelineRunLog
 from media_manager.models import MediaAsset
 
@@ -21,8 +21,19 @@ class MediaAssetSerializer(serializers.ModelSerializer):
         fields = ['id', 'file', 'file_type', 'purpose', 'size_bytes', 'created_at']
 
 
+class GeneratedVideoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GeneratedVideo
+        fields = [
+            'id', 'provider', 'model', 'prompt', 'video_file', 
+            'external_job_id', 'status', 'duration', 'generation_time',
+            'error_message', 'created_at', 'completed_at'
+        ]
+
+
 class SceneSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    generated_videos = GeneratedVideoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Scene
@@ -31,7 +42,8 @@ class SceneSerializer(serializers.ModelSerializer):
             'image_file', 'video_file', 'duration', 'status', 'status_display', 'created_at',
             'title', 'description', 'characters', 'environment', 'lighting', 'mood',
             'camera_angle', 'image_prompt', 'animation_prompt',
-            'image_seed', 'image_model', 'image_generation_time'
+            'image_seed', 'image_model', 'image_generation_time',
+            'generated_videos'
         ]
 
 

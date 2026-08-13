@@ -5,8 +5,9 @@ class PipelineRunLog(models.Model):
     class Step(models.TextChoices):
         STORY_INITIALIZATION = 'STORY_INITIALIZATION', 'Story Initialization'
         SCRIPT_GENERATION = 'SCRIPT_GENERATION', 'Script & Scenes Generation'
-        IMAGE_GENERATION = 'IMAGE_GENERATION', 'Image Assets Generation'
-        VIDEO_GENERATION = 'VIDEO_GENERATION', 'Video Clip Generation'
+        DIRECT_VIDEO_GENERATION = 'DIRECT_VIDEO_GENERATION', 'Direct Video Generation'
+        NARRATION = 'NARRATION', 'Narration Track Generation'
+        BACKGROUND_MUSIC = 'BACKGROUND_MUSIC', 'Background Music Integration'
         FFMPEG_STITCHING = 'FFMPEG_STITCHING', 'FFmpeg Video Stitching'
         COMPLETED = 'COMPLETED', 'Pipeline Completed'
         FAILED = 'FAILED', 'Pipeline Failed'

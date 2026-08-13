@@ -3,23 +3,21 @@ import time
 import traceback
 from celery import shared_task
 from django.conf import settings
-from django.utils import timezone
 
-from stories.models import Story, Scene
+from stories.models import Story, Scene, GeneratedVideo
 from history.models import PipelineRunLog
 from media_manager.models import MediaAsset
-from ai.services import generate_story_script, generate_scene_image
-from ffmpeg_service.utils import convert_image_to_video, add_text_caption_to_video, stitch_videos
+from ai.services import generate_story_script
+from ffmpeg_service.utils import stitch_videos
+from ai.video_generation.manager import VideoGenerationManager
 
 @shared_task(bind=True)
 def run_story_generation_pipeline(self, story_id: int):
     """
-    Celery task that orchestrates the entire Text-to-Animation pipeline:
-    1. Generates storyboard script & scene text from the prompt.
-    2. Renders scene image assets using Pillow.
-    3. Converts image assets to video clips using FFmpeg.
-    4. Overlays subtitles onto the video clips.
-    5. Concatenates/stitches the clips into the final animation video.
+    Celery task that orchestrates the Text-to-Animation pipeline:
+    1. Prepares log registries.
+    2. Generates storyboard script & scene text from the prompt.
+    3. Initiates direct scene video generation asynchronously.
     """
     task_id = self.request.id
     
@@ -99,109 +97,192 @@ def run_story_generation_pipeline(self, story_id: int):
             duration=step_duration
         )
 
-        # 3. Scene Asset Generation (Image + Video Clips)
-        scene_video_paths = []
-        
-        for scene in created_scenes:
-            scene.status = Scene.Status.GENERATING_ASSETS
-            scene.save()
-            
-            # --- Image Generation Step ---
-            step_start = time.time()
-            create_log(
-                PipelineRunLog.Step.IMAGE_GENERATION,
-                PipelineRunLog.Status.RUNNING,
-                f"Generating image asset for Scene #{scene.scene_number}..."
-            )
-            
-            # Define file paths
-            filename_base = f"story_{story.id}_scene_{scene.scene_number}"
-            img_rel_path = f"animations/scenes/images/{filename_base}.jpg"
-            img_abs_path = os.path.join(settings.MEDIA_ROOT, img_rel_path)
-            
-            # Generate the scene image
-            generate_scene_image(scene, img_abs_path)
-            scene.image_file.name = img_rel_path
-            scene.save()
-            
-            # Register in Media Asset Manager
-            MediaAsset.objects.create(
-                file=img_rel_path,
-                file_type=MediaAsset.FileType.IMAGE,
-                purpose=f"Scene {scene.scene_number} Image",
-                story=story,
-                scene=scene
-            )
-            
-            img_duration = time.time() - step_start
-            create_log(
-                PipelineRunLog.Step.IMAGE_GENERATION,
-                PipelineRunLog.Status.SUCCESS,
-                f"Image asset for Scene #{scene.scene_number} saved.",
-                duration=img_duration
-            )
-
-            # --- Video Clip Generation & Subtitle Overlay Step ---
-            step_start = time.time()
-            create_log(
-                PipelineRunLog.Step.VIDEO_GENERATION,
-                PipelineRunLog.Status.RUNNING,
-                f"Rendering video clip and overlaying subtitles for Scene #{scene.scene_number}..."
-            )
-            
-            raw_video_rel_path = f"animations/scenes/videos/{filename_base}_raw.mp4"
-            raw_video_abs_path = os.path.join(settings.MEDIA_ROOT, raw_video_rel_path)
-            
-            captioned_video_rel_path = f"animations/scenes/videos/{filename_base}_captioned.mp4"
-            captioned_video_abs_path = os.path.join(settings.MEDIA_ROOT, captioned_video_rel_path)
-            
-            # Step A: Image to raw video clip
-            convert_image_to_video(img_abs_path, raw_video_abs_path, scene.duration)
-            
-            # Step B: Add narration subtitles
-            add_text_caption_to_video(raw_video_abs_path, captioned_video_abs_path, scene.narration_text)
-            
-            # Store final scene video
-            scene.video_file.name = captioned_video_rel_path
-            scene.status = Scene.Status.COMPLETED
-            scene.save()
-            
-            # Register in Media Asset Manager
-            MediaAsset.objects.create(
-                file=captioned_video_rel_path,
-                file_type=MediaAsset.FileType.VIDEO,
-                purpose=f"Scene {scene.scene_number} Video Clip",
-                story=story,
-                scene=scene
-            )
-            
-            # Clean up intermediate raw clip to save space
-            if os.path.exists(raw_video_abs_path):
-                try:
-                    os.remove(raw_video_abs_path)
-                except Exception:
-                    pass
-            
-            scene_video_paths.append(captioned_video_abs_path)
-            
-            video_duration = time.time() - step_start
-            create_log(
-                PipelineRunLog.Step.VIDEO_GENERATION,
-                PipelineRunLog.Status.SUCCESS,
-                f"Video clip for Scene #{scene.scene_number} completed.",
-                duration=video_duration
-            )
-
-        # 4. Concatenation / FFmpeg Stitching Step
-        step_start = time.time()
+        # 3. Trigger Direct Video Generation Asynchronously
         create_log(
-            PipelineRunLog.Step.FFMPEG_STITCHING,
+            PipelineRunLog.Step.DIRECT_VIDEO_GENERATION,
             PipelineRunLog.Status.RUNNING,
-            f"Stitching {len(scene_video_paths)} scene video clips into final animation..."
+            f"Initiated direct video generation for {len(created_scenes)} scenes."
+        )
+
+        # Dispatch async task for each scene
+        for scene in created_scenes:
+            generate_scene_video.delay(scene.id)
+
+        return f"Successfully initiated scene video generation for Story #{story_id}."
+
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        total_duration = time.time() - pipeline_start_time
+        
+        create_log(
+            PipelineRunLog.Step.FAILED,
+            PipelineRunLog.Status.FAILED,
+            f"Pipeline failed: {str(e)}",
+            duration=total_duration,
+            error=tb_str
         )
         
+        story.status = Story.Status.FAILED
+        story.save()
+        raise e
+
+
+@shared_task(bind=True)
+def generate_scene_video(self, scene_id: int):
+    """
+    Celery task that generates video for a single scene using the fallback sequence.
+    """
+    try:
+        scene = Scene.objects.get(pk=scene_id)
+    except Scene.DoesNotExist:
+        return f"Scene #{scene_id} not found."
+
+    story = scene.story
+    scene.status = Scene.Status.GENERATING
+    scene.save()
+
+    # Define paths
+    filename_base = f"story_{story.id}_scene_{scene.scene_number}"
+    video_rel_path = f"animations/scenes/videos/{filename_base}.mp4"
+    video_abs_path = os.path.join(settings.MEDIA_ROOT, video_rel_path)
+    os.makedirs(os.path.dirname(video_abs_path), exist_ok=True)
+
+    start_time = time.time()
+
+    # Run generation manager
+    manager = VideoGenerationManager()
+    result = manager.generate_video_for_scene(scene, video_abs_path)
+    generation_time = time.time() - start_time
+
+    # Save GeneratedVideo record
+    gen_video = GeneratedVideo.objects.create(
+        scene=scene,
+        provider=result["provider"],
+        model=result["model"],
+        prompt=result["prompt"],
+        external_job_id=result["external_job_id"],
+        status=result["status"],
+        duration=scene.duration,
+        generation_time=generation_time,
+        api_response=result["raw_response"],
+        error_message=result["error"]
+    )
+
+    if result["status"] == "COMPLETED":
+        # Register in media field of scene
+        scene.video_file.name = video_rel_path
+        scene.status = Scene.Status.COMPLETED
+        scene.save()
+
+        # Register in Media Asset Manager
+        MediaAsset.objects.create(
+            file=video_rel_path,
+            file_type=MediaAsset.FileType.VIDEO,
+            purpose=f"Scene {scene.scene_number} Direct Video",
+            story=story,
+            scene=scene
+        )
+        
+        # Save GeneratedVideo video_file field
+        gen_video.video_file.name = video_rel_path
+        gen_video.save()
+        
+        logger_message = f"Video generated successfully for Scene #{scene.scene_number} via {result['provider']}."
+    else:
+        scene.status = Scene.Status.FAILED
+        scene.save()
+        logger_message = f"Video generation failed for Scene #{scene.scene_number}. Error: {result['error']}"
+
+    # Log individual result in pipeline log steps if necessary, or just track in general
+    # Check if all scenes for the story are finished
+    total_scenes = story.scenes.count()
+    completed_scenes = story.scenes.filter(status=Scene.Status.COMPLETED).count()
+    failed_scenes = story.scenes.filter(status=Scene.Status.FAILED).count()
+
+    if completed_scenes + failed_scenes == total_scenes:
+        # Resolve the step logs for DIRECT_VIDEO_GENERATION
+        # Get active step logs for this story
+        video_step_log = story.logs.filter(
+            step=PipelineRunLog.Step.DIRECT_VIDEO_GENERATION,
+            status=PipelineRunLog.Status.RUNNING
+        ).last()
+
+        if failed_scenes > 0:
+            msg = f"Direct video generation complete with errors: {completed_scenes} succeeded, {failed_scenes} failed."
+            if video_step_log:
+                video_step_log.status = PipelineRunLog.Status.FAILED
+                video_step_log.log_message = msg
+                video_step_log.save()
+
+            story.status = Story.Status.FAILED
+            story.save()
+
+            # Create failed pipeline log
+            PipelineRunLog.objects.create(
+                story=story,
+                step=PipelineRunLog.Step.FAILED,
+                status=PipelineRunLog.Status.FAILED,
+                log_message="Animation pipeline failed because some scene videos failed to generate."
+            )
+        else:
+            msg = f"Direct video generation complete for all {total_scenes} scenes."
+            if video_step_log:
+                video_step_log.status = PipelineRunLog.Status.SUCCESS
+                video_step_log.log_message = msg
+                video_step_log.save()
+
+            # Start final rendering (stitching) task
+            stitch_story_videos_task.delay(story.id)
+
+    return logger_message
+
+
+@shared_task(bind=True)
+def stitch_story_videos_task(self, story_id: int):
+    """
+    Celery task that stitches completed scene videos into the final animation video.
+    """
+    task_id = self.request.id
+    try:
+        story = Story.objects.get(pk=story_id)
+    except Story.DoesNotExist:
+        return f"Story #{story_id} not found."
+
+    def create_log(step, status, message="", duration=None, error=""):
+        return PipelineRunLog.objects.create(
+            story=story,
+            task_id=task_id,
+            step=step,
+            status=status,
+            log_message=message,
+            duration_seconds=duration,
+            error_traceback=error
+        )
+
+    pipeline_start_time = time.time()
+    
+    # 4. Concatenation / FFmpeg Stitching Step
+    step_start = time.time()
+    create_log(
+        PipelineRunLog.Step.FFMPEG_STITCHING,
+        PipelineRunLog.Status.RUNNING,
+        "Stitching scene video clips into final animation..."
+    )
+
+    try:
+        # Collect scene videos in order
+        scenes = story.scenes.all().order_by("scene_number")
+        scene_video_paths = []
+        for scene in scenes:
+            if scene.video_file:
+                scene_video_paths.append(scene.video_file.path)
+        
+        if len(scene_video_paths) != len(scenes):
+            raise ValueError(f"Missing video files for stitching. Found {len(scene_video_paths)} videos out of {len(scenes)} scenes.")
+
         final_video_rel_path = f"animations/completed/story_{story.id}_final.mp4"
         final_video_abs_path = os.path.join(settings.MEDIA_ROOT, final_video_rel_path)
+        os.makedirs(os.path.dirname(final_video_abs_path), exist_ok=True)
         
         stitch_success = stitch_videos(scene_video_paths, final_video_abs_path)
         
@@ -240,22 +321,17 @@ def run_story_generation_pipeline(self, story_id: int):
         return f"Successfully generated final animation for Story #{story_id}."
 
     except Exception as e:
-        # Error handling / Pipeline Failure
         tb_str = traceback.format_exc()
-        total_duration = time.time() - pipeline_start_time
+        stitch_duration = time.time() - step_start
         
         create_log(
             PipelineRunLog.Step.FAILED,
             PipelineRunLog.Status.FAILED,
-            f"Pipeline failed: {str(e)}",
-            duration=total_duration,
+            f"Stitching failed: {str(e)}",
+            duration=stitch_duration,
             error=tb_str
         )
         
         story.status = Story.Status.FAILED
         story.save()
-        
-        # Update any in-progress scene to failed
-        story.scenes.filter(status=Scene.Status.GENERATING_ASSETS).update(status=Scene.Status.FAILED)
-        
         raise e

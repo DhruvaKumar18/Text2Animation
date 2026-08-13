@@ -739,7 +739,7 @@ class SceneSplitterService:
     @classmethod
     def _call_gemini(cls, prompt: str, api_key: str) -> str:
         import requests
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
         headers = {'Content-Type': 'application/json'}
         payload = {
             "contents": [{
@@ -763,7 +763,7 @@ class SceneSplitterService:
             'Content-Type': 'application/json'
         }
         payload = {
-            "model": "llama3-8b-8192",
+            "model": "llama-3.1-8b-instant",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1
         }

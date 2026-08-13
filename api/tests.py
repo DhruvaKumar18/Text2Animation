@@ -89,15 +89,16 @@ class ApiTestCase(APITestCase):
         url = reverse('story-polish-prompt')
         data = {'prompt': 'astronaut car landscape'}
         
-        with patch.dict('os.environ', {'GEMINI_API_KEY': '', 'GROQ_API_KEY': '', 'OPENROUTER_API_KEY': ''}, clear=True):
-            response = self.client.post(url, data, format='json')
-            
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['provider'], 'MOCK')
-            self.assertIn('Cinematic space explorer', response.data['polished_text'])
-            self.assertIn('hovercraft', response.data['polished_text'])
-            self.assertIn('visual vistas', response.data['polished_text'])
-            self.assertTrue('execution_time' in response.data)
+        with self.settings(GEMINI_API_KEY='', GROQ_API_KEY='', OPENROUTER_API_KEY=''):
+            with patch.dict('os.environ', {'GEMINI_API_KEY': '', 'GROQ_API_KEY': '', 'OPENROUTER_API_KEY': ''}, clear=True):
+                response = self.client.post(url, data, format='json')
+                
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data['provider'], 'MOCK')
+                self.assertIn('Cinematic space explorer', response.data['polished_text'])
+                self.assertIn('hovercraft', response.data['polished_text'])
+                self.assertIn('visual vistas', response.data['polished_text'])
+                self.assertTrue('execution_time' in response.data)
 
     def test_polish_prompt_endpoint_missing_prompt(self):
         """API request without prompt parameter should return HTTP 400 Bad Request."""
@@ -111,15 +112,16 @@ class ApiTestCase(APITestCase):
         url = reverse('story-split-prompt')
         data = {'prompt': 'The astronaut floats in space.\nA giant spacecraft emerges.'}
         
-        with patch.dict('os.environ', {'GEMINI_API_KEY': '', 'GROQ_API_KEY': '', 'OPENROUTER_API_KEY': ''}, clear=True):
-            response = self.client.post(url, data, format='json')
-            
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(len(response.data), 2)
-            self.assertEqual(response.data[0]['scene_number'], 1)
-            self.assertEqual(response.data[0]['title'], "The Astronaut Floats")
-            self.assertEqual(response.data[1]['title'], "A Giant Spacecraft")
-            self.assertEqual(response.data[0]['characters'], "Cinematic space explorer")
+        with self.settings(GEMINI_API_KEY='', GROQ_API_KEY='', OPENROUTER_API_KEY=''):
+            with patch.dict('os.environ', {'GEMINI_API_KEY': '', 'GROQ_API_KEY': '', 'OPENROUTER_API_KEY': ''}, clear=True):
+                response = self.client.post(url, data, format='json')
+                
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(len(response.data), 2)
+                self.assertEqual(response.data[0]['scene_number'], 1)
+                self.assertEqual(response.data[0]['title'], "The Astronaut Floats")
+                self.assertEqual(response.data[1]['title'], "A Giant Spacecraft")
+                self.assertEqual(response.data[0]['characters'], "Cinematic space explorer")
 
     def test_split_prompt_endpoint_missing_prompt(self):
         """API request to split without prompt should return HTTP 400 Bad Request."""
@@ -136,12 +138,13 @@ class ApiTestCase(APITestCase):
         url = reverse('story-generate-scene-image-endpoint', args=[story.id])
         data = {'scene_number': 1}
         
-        with patch.dict('os.environ', {'HF_API_KEY': '', 'FAL_KEY': '', 'REPLICATE_API_TOKEN': ''}, clear=True):
-            response = self.client.post(url, data, format='json')
-            
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['scene']['scene_number'], 1)
-            self.assertEqual(response.data['scene']['image_model'], 'MOCK_PILLOW')
+        with self.settings(HF_API_KEY='', FAL_KEY='', REPLICATE_API_TOKEN=''):
+            with patch.dict('os.environ', {'HF_API_KEY': '', 'FAL_KEY': '', 'REPLICATE_API_TOKEN': ''}, clear=True):
+                response = self.client.post(url, data, format='json')
+                
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data['scene']['scene_number'], 1)
+                self.assertEqual(response.data['scene']['image_model'], 'MOCK_PILLOW')
 
     def test_generate_scene_image_endpoint_missing_parameters(self):
         """API request without scene_number should return HTTP 400 Bad Request."""
@@ -150,6 +153,33 @@ class ApiTestCase(APITestCase):
         response = self.client.post(url, {}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('error', response.data)
+
+    def test_generate_scene_video_endpoint_success(self):
+        """API request to manually trigger a scene's video generation should succeed and enqueue Celery task."""
+        story = Story.objects.create(prompt="Space explorer.", status=Story.Status.COMPLETED)
+        scene = Scene.objects.create(story=story, scene_number=1, prompt="Widescreen space astronaut.")
+        
+        url = reverse('story-generate-scene-video-endpoint', args=[story.id])
+        data = {'scene_number': 1}
+        
+        with patch('pipeline.tasks.generate_scene_video.delay') as mock_delay:
+            response = self.client.post(url, data, format='json')
+            
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data['scene']['scene_number'], 1)
+            
+            story.refresh_from_db()
+            self.assertEqual(story.status, Story.Status.PROCESSING)
+            mock_delay.assert_called_once_with(scene.id)
+
+    def test_generate_scene_video_endpoint_missing_parameters(self):
+        """API request without scene_number to generate-scene-video should fail with 400."""
+        story = Story.objects.create(prompt="Space explorer.")
+        url = reverse('story-generate-scene-video-endpoint', args=[story.id])
+        response = self.client.post(url, {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.data)
+
 
 
 
